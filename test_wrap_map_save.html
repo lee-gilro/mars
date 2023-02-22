@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<head>
+  <style>
+    body {
+      margin: 0;
+    }
+  
+    .infoWrapper {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 90%;
+      height: 90%;
+      background-color: #111;
+      border: 2px solid #ff00ff;
+      z-index: 2;
+      display: none;
+      padding: 0 5%;
+      max-width: 90vw; 
+      max-height: 90vh;
+      color: #fff;
+      font-family: 'Arial';
+      overflow: scroll; /* 추가 */
+    }
+  
+    .infoWrapper.active {
+      display: block;
+      overflow: hidden; /* 추가 */
+    }
+  
+    .infoWrapper__close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      font-size: 24px;
+      cursor: pointer;
+    }
+    #info-chart-container {
+      overflow : hidden;
+      height: 80%;
+    }
+    #info-polygon {
+      width: 100%;
+      height: 100%;
+    }
+    #info-chart {
+      width: 100%;
+      height: 100%;
+      transform-origin: center center; /* 추가 */
+    }
+    .image-container {
+      position: absolute;
+      width: 32px;
+      height: 32px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+  
+    #globeViz {
+      position: relative;
+      height: 100vh;
+      width: 100vw;
+    }
+  
+  </style>
+
+  <script src="d3.js"></script>
+  <script src="d3-zoom.js"></script>
+  <script src="globe.gl.js"></script>
+  <script src="turf.js"></script> <!-- Turf.js 라이브러리 추가 -->
+  <script src='panzoom.min.js'></script>
+</head>
+
+<body>
+  <div id="globeViz"></div>
+
+  <div class="infoWrapper">
+    <div class="infoWrapper__close">&times;</div>
+    <h2 id="info-country"></h2>
+    <div id="info-chart-container">
+      <svg id="info-chart"></svg>
+    </div>
+  </div>
+
+  
+  <script>
+    const colorScale = d3.scaleSequentialSqrt(d3.interpolateYlOrRd);
+    const zoomInDuration = 2000;
+    const zoomOutDuration = 500;
+    const zoomOutDelay = 4000;
+    const viewDuration = zoomInDuration + zoomOutDuration + zoomOutDelay;
+    
+    // GDP per capita (avoiding countries with small pop)
+    const getVal = feat => feat.properties.GDP_MD_EST / Math.max(1e5, feat.properties.POP_EST);
+    // just grab a DOM element
+    const element = document.querySelector('#info-chart-container')
+
+    
+    // And pass it to panzoom
+   
+    fetch('small.geojson').then(res => res.json()).then(countries => {
+      const maxVal = Math.max(...countries.features.map(getVal));
+      colorScale.domain([0, maxVal]);
+      console.log("국가", countries.features);
+      const infoWrapper = document.querySelector('.infoWrapper');
+      const infoWrapperWidth = infoWrapper.clientWidth;
+      const infoWrapperHeight = infoWrapper.clientWidth;
+      const infoWrapperMiddleX = infoWrapperWidth / 2;
+      const minDimension = Math.max(infoWrapperWidth, infoWrapperHeight);
+
+      const infoWrapperClose = infoWrapper.querySelector('.infoWrapper__close');
+      const infoCountry = document.getElementById('info-country');
+      const infoChart = d3.select('#info-chart');
+      const path = d3.geoPath();
+      const infoChartContainer = document.getElementById('info-chart-container');
+
+      const infoChartWidth = infoChartContainer.clientWidth;
+      const infoChartHeight = infoChartContainer.clientHeight;
+      
+      function handleZoomInCompleted(polygon) {
+        infoChart.selectAll('viewBox').remove();
+        const instance = panzoom(element, {
+          minZoom: 1,
+          maxZoom: 4,
+          bounds:true,
+          boundsPadding:0.05
+        })
+        // hexagon 생성
+        const hexagonSize = 50;
+        const hexagons = turf.hexGrid(turf.bbox(polygon), hexagonSize, { units: 'kilometers' });
+     
+        console.log("hexagons",hexagons);
+      
+        infoCountry.textContent = polygon.properties.ADMIN;
+        infoChart.selectAll('path').remove();
+        infoWrapper.classList.add('active');
+      
+        const bounds = path.bounds(polygon);
+        const polygonX = bounds[0][0];
+        const width = bounds[1][0] - bounds[0][0];
+        const height = bounds[1][1] - bounds[0][1];
+        const x = d3.scaleLinear().domain([-180, 180]).range([0, width]);
+        const y = d3.scaleLinear().domain([90, -90]).range([0, height]);
+        const polygonXTranslated = polygonX - infoWrapperMiddleX;
+      
+        const polygonSVG = infoChart
+          .append('svg')
+          .attr('viewBox', `0 0 ${width} ${height}`)
+          .attr('width', '100%')
+          .attr('height', '100%')
+          
+          .append('g')
+          .attr('transform', `translate(${-polygonXTranslated},${-bounds[0][1]})`);
+          
+
+          const hexagonsInsidePolygon = [];
+          hexagons.features.forEach(hexagon => {
+            const center = turf.center(hexagon);
+            if (turf.booleanPointInPolygon(center, polygon)) {
+              hexagonsInsidePolygon.push(hexagon);
+            }
+          
+
+          })
+          console.log("Hexa inside polygon", hexagonsInsidePolygon);
+
+      
+          const defs = polygonSVG.append("defs");
+          defs
+            .append("pattern")
+            .attr("id", "img1")
+            .attr("patternUnits", "objectBoundingBox")
+            .attr("width", "1")
+            .attr("height", "1")
+            .append("image")
+            .attr("href", "./ct.png")
+            .attr("x", "0")
+            .attr("y", "0")
+            .attr("width", "1")
+            .attr("height", "1");
+
+          // 각각의 헥사곤 생성
+          polygonSVG
+          .selectAll(".hexagon")
+          .data(hexagonsInsidePolygon)
+          .enter()
+          .append("path")
+          .attr("d", d => path(turf.polygonToLine(d)))
+          .attr("class", "hexagon")
+          .attr("fill", (d, i) => `url(#img${i + 1})`) // hexagon 개수만큼 fill 속성 변경
+          .style("stroke", "black")
+          .style("stroke-width", "0.1px")
+
+         
+      }
+      
+
+      let currentView = { lat: 0, lng: 0, altitude: 1 };
+      const world = Globe()
+        .globeImageUrl('mars.jpg')
+        .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
+        .lineHoverPrecision(0)
+        .polygonsData(countries.features)
+        .polygonAltitude(0.1)
+        .polygonCapColor(feat => 'transparent')
+        .polygonSideColor(() => 'rgba(0, 100, 0, 0.15)')
+        .polygonStrokeColor(() => '#111')
+        .onPolygonHover(hoverD => {
+          world.polygonAltitude(d => d === hoverD ? 0.12 : 0.06);
+          world.polygonCapColor(d => d === hoverD ?  colorScale(getVal(d)) : 'transparent');
+        })
+        .onPolygonClick((polygon, event, coord) => {
+          const centroid = d3.polygonCentroid(polygon.geometry.coordinates[0]);
+          const lat = centroid[1];
+          const lng = centroid[0];
+          const altitude = 1;
+          console.log("clicked")
+          currentView = { lat, lng, altitude };
+          world.pointOfView(currentView, zoomInDuration);
+          setTimeout(() => {
+            handleZoomInCompleted(polygon);
+          }, zoomInDuration-100);
+ 
+        })
+        .polygonsTransitionDuration(300);
+
+      world(document.getElementById('globeViz'));
+
+      infoWrapperClose.addEventListener('click', () => {
+        infoWrapper.classList.remove('active');
+      });
+    });
+  </script>
+</body>
